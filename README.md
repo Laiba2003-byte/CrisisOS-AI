@@ -1,4 +1,4 @@
-CrisisOS AI – Brief Project Description
+#CrisisOS AI
 
 CrisisOS AI is an AI-powered emergency response command center designed for disaster management agencies, rescue organizations, and emergency operation centers. During disasters such as floods, earthquakes, fires, or road accidents, emergency teams receive hundreds of reports from different sources, making it difficult to prioritize incidents and allocate resources efficiently.
 
