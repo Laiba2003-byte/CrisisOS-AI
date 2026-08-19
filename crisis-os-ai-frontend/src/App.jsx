@@ -26,6 +26,7 @@ import RecentAlerts from "./components/RecentAlerts.jsx";
 import ReportForm from "./components/ReportForm.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import StatCard from "./components/StatCard.jsx";
+import TestView from "./components/TestView.jsx";
 
 const nextIncidentStatus = {
   needs_review: "new",
@@ -70,6 +71,10 @@ const viewMeta = {
   settings: {
     title: "Settings",
     subtitle: "Local system configuration"
+  },
+  test: {
+    title: "Test Page",
+    subtitle: "Manual smoke checks"
   }
 };
 
@@ -475,6 +480,8 @@ function App() {
             onRefresh={() => loadDashboardData()}
           />
         );
+      case "test":
+        return <TestView apiOnline={apiOnline} />;
       default:
         return renderOverview();
     }

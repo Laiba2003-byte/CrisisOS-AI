@@ -8,6 +8,7 @@ import {
   Map,
   Settings,
   Shield,
+  ClipboardCheck,
   Warehouse
 } from "lucide-react";
 import { formatTime } from "../utils/formatters.js";
@@ -21,7 +22,8 @@ const navItems = [
   { id: "resources", label: "Resources", icon: Ambulance, countKey: "resources" },
   { id: "shelters", label: "Shelters", icon: Warehouse, countKey: "shelters" },
   { id: "analytics", label: "Analytics", icon: BarChart3, countKey: "analytics" },
-  { id: "settings", label: "Settings", icon: Settings }
+  { id: "settings", label: "Settings", icon: Settings },
+  { id: "test", label: "Test Page", icon: ClipboardCheck }
 ];
 
 function Sidebar({ activeView = "overview", apiOnline, counts = {}, onViewChange }) {
