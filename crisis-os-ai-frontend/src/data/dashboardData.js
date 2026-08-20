@@ -119,3 +119,39 @@ export const trendSeries = [
   { label: "Moderate", color: "#38bdf8", points: [4, 13, 3, 12, 13, 15, 23] },
   { label: "Low", color: "#34d399", points: [4, 6, 3, 4, 6, 5, 9] }
 ];
+
+export const fallbackShelters = [
+  {
+    id: "shelter-lhr-sports-complex",
+    name: "Nishtar Park Sports Complex Relief Camp",
+    locationText: "Nishtar Park, Gulberg III, Lahore",
+    lat: 31.5125,
+    lng: 74.3312,
+    capacity: 500,
+    occupancy: 180,
+    status: "active",
+    contactPhone: "+92 42 111 222 333"
+  },
+  {
+    id: "shelter-isl-convention-center",
+    name: "Islamabad Convention Center Relief Hub",
+    locationText: "Club Road, G-5/1, Islamabad",
+    lat: 33.7089,
+    lng: 73.0924,
+    capacity: 800,
+    occupancy: 340,
+    status: "active",
+    contactPhone: "+92 51 920 1122"
+  },
+  {
+    id: "shelter-khi-expocenter",
+    name: "Karachi Expo Centre Emergency Shelter",
+    locationText: "University Road, Gulshan-e-Iqbal, Karachi",
+    lat: 24.9012,
+    lng: 67.0876,
+    capacity: 1200,
+    occupancy: 610,
+    status: "active",
+    contactPhone: "+92 21 992 0112"
+  }
+];

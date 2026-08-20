@@ -20,6 +20,7 @@ import {
   Wrench
 } from "lucide-react";
 import { API_BASE_URL } from "../utils/api.js";
+import { fallbackShelters } from "../data/dashboardData.js";
 import {
   confidenceLabel,
   formatTime,
@@ -509,24 +510,28 @@ export function ResourcesView({ actionStates = {}, apiOnline, onStatusChange, on
     </>
   );
 }
-export function SheltersView() {
-  const totalCapacity = shelters.reduce((sum, shelter) => sum + shelter.capacity, 0);
-  const occupied = shelters.reduce((sum, shelter) => sum + shelter.occupied, 0);
+export function SheltersView({ shelters: activeShelters, onUpdateShelter }) {
+  const displayShelters = (Array.isArray(activeShelters) && activeShelters.length > 0) ? activeShelters : fallbackShelters;
+  const totalCapacity = displayShelters.reduce((sum, s) => sum + (s.capacity || 0), 0);
+  const totalOccupancy = displayShelters.reduce((sum, s) => sum + (s.occupancy || s.occupied || 0), 0);
+  const occupancyPercent = totalCapacity > 0 ? Math.round((totalOccupancy / totalCapacity) * 100) : 0;
 
   return (
     <>
       <section className="grid gap-4 sm:grid-cols-3">
-        <MetricCard label="Shelters" value={shelters.length} detail="Registered facilities" icon={Warehouse} tone="bg-sky-500/15 text-sky-300" />
-        <MetricCard label="Capacity" value={totalCapacity} detail="Total beds" icon={Users} tone="bg-emerald-500/15 text-emerald-300" />
-        <MetricCard label="Occupied" value={`${Math.round((occupied / totalCapacity) * 100)}%`} detail={`${occupied}/${totalCapacity} beds`} icon={Building2} tone="bg-amber-500/15 text-amber-300" />
+        <MetricCard label="Shelters" value={displayShelters.length} detail="Registered relief centers" icon={Warehouse} tone="bg-sky-500/15 text-sky-300" />
+        <MetricCard label="Total Capacity" value={totalCapacity} detail="Available beds" icon={Users} tone="bg-emerald-500/15 text-emerald-300" />
+        <MetricCard label="Occupied" value={`${occupancyPercent}%`} detail={`${totalOccupancy}/${totalCapacity} beds filled`} icon={Building2} tone="bg-amber-500/15 text-amber-300" />
       </section>
 
       <Panel>
-        <h2 className="text-base font-semibold text-white">Shelter Network</h2>
+        <h2 className="text-base font-semibold text-white">Emergency Shelter Network</h2>
         <div className="mt-5 grid gap-4 lg:grid-cols-2">
-          {shelters.map((shelter) => {
-            const percent = Math.round((shelter.occupied / shelter.capacity) * 100);
-            const isOpen = shelter.status === "open";
+          {displayShelters.map((shelter) => {
+            const currentOccupancy = shelter.occupancy ?? shelter.occupied ?? 0;
+            const percent = shelter.capacity > 0 ? Math.min(100, Math.round((currentOccupancy / shelter.capacity) * 100)) : 0;
+            const isActive = shelter.status === "active" || shelter.status === "open";
+            const isFull = shelter.status === "full" || percent >= 100;
 
             return (
               <article className="rounded-lg border border-white/10 bg-black/15 p-4" key={shelter.id}>
@@ -534,24 +539,62 @@ export function SheltersView() {
                   <div>
                     <h3 className="text-sm font-semibold text-white">{shelter.name}</h3>
                     <p className="mt-2 flex items-center gap-2 text-sm text-slate-400">
-                      <MapPin className="h-4 w-4" />
-                      {shelter.location}
+                      <MapPin className="h-4 w-4 shrink-0 text-sky-400" />
+                      {shelter.locationText || shelter.location}
                     </p>
                   </div>
-                  <span className={`rounded-md border px-2 py-1 text-xs font-medium ${isOpen ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-200" : "border-amber-500/30 bg-amber-500/15 text-amber-200"}`}>
-                    {shelter.status}
+                  <span className={`rounded-md border px-2.5 py-1 text-xs font-medium uppercase tracking-wider ${
+                    isFull
+                      ? "border-red-500/30 bg-red-500/15 text-red-200"
+                      : isActive
+                      ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-200"
+                      : "border-slate-500/30 bg-slate-500/15 text-slate-300"
+                  }`}>
+                    {isFull ? "Full" : shelter.status}
                   </span>
                 </div>
+
                 <div className="mt-5">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-400">Capacity</span>
-                    <span className="font-semibold text-white">{shelter.occupied}/{shelter.capacity}</span>
+                    <span className="text-slate-400">Occupancy</span>
+                    <span className="font-semibold text-white">{currentOccupancy} / {shelter.capacity} beds ({percent}%)</span>
                   </div>
-                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
-                    <div className="h-full rounded-full bg-sky-400" style={{ width: `${percent}%` }} />
+                  <div className="mt-2.5 h-2 overflow-hidden rounded-full bg-white/10">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        percent >= 90 ? "bg-red-400" : percent >= 75 ? "bg-amber-400" : "bg-emerald-400"
+                      }`}
+                      style={{ width: `${percent}%` }}
+                    />
                   </div>
                 </div>
-                <p className="mt-4 text-sm text-slate-400">Medical support: {shelter.medical}</p>
+
+                {shelter.contactPhone ? (
+                  <p className="mt-4 text-xs text-slate-400 flex items-center gap-1.5">
+                    <span className="text-slate-500">Contact:</span> {shelter.contactPhone}
+                  </p>
+                ) : null}
+
+                {onUpdateShelter ? (
+                  <div className="mt-4 flex items-center gap-2 border-t border-white/5 pt-3">
+                    <button
+                      type="button"
+                      disabled={currentOccupancy <= 0}
+                      onClick={() => onUpdateShelter(shelter, { occupancy: Math.max(0, currentOccupancy - 10) })}
+                      className="rounded border border-slate-700 bg-slate-800/80 px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-40"
+                    >
+                      -10 Beds
+                    </button>
+                    <button
+                      type="button"
+                      disabled={currentOccupancy >= shelter.capacity}
+                      onClick={() => onUpdateShelter(shelter, { occupancy: Math.min(shelter.capacity, currentOccupancy + 10) })}
+                      className="rounded border border-slate-700 bg-slate-800/80 px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-40"
+                    >
+                      +10 Beds
+                    </button>
+                  </div>
+                ) : null}
               </article>
             );
           })}

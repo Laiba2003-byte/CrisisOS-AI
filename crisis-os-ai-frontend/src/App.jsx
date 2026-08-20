@@ -5,8 +5,8 @@ import {
   CheckCircle2,
   ShieldCheck
 } from "lucide-react";
-import { fallbackIncidents, fallbackResources } from "./data/dashboardData.js";
-import { fetchJson } from "./utils/api.js";
+import { fallbackIncidents, fallbackResources, fallbackShelters } from "./data/dashboardData.js";
+import { fetchJson, subscribeToEvents } from "./utils/api.js";
 import { sortIncidents } from "./utils/formatters.js";
 import { ResourceAvailability, TrendChart, TypeBreakdown } from "./components/AnalyticsPanels.jsx";
 import {
@@ -82,6 +82,7 @@ function App() {
   const [activeView, setActiveView] = useState("overview");
   const [incidents, setIncidents] = useState([]);
   const [resources, setResources] = useState([]);
+  const [shelters, setShelters] = useState([]);
   const [suggestionsByIncidentId, setSuggestionsByIncidentId] = useState({});
   const [apiOnline, setApiOnline] = useState(false);
   const [isDashboardLoading, setIsDashboardLoading] = useState(true);
@@ -94,9 +95,10 @@ function App() {
       setIsDashboardLoading(true);
     }
 
-    const [incidentResult, resourceResult] = await Promise.allSettled([
+    const [incidentResult, resourceResult, shelterResult] = await Promise.allSettled([
       fetchJson("/incidents"),
-      fetchJson("/resources")
+      fetchJson("/resources"),
+      fetchJson("/shelters")
     ]);
 
     if (incidentResult.status === "fulfilled") {
@@ -107,8 +109,12 @@ function App() {
       setResources(Array.isArray(resourceResult.value) ? resourceResult.value : []);
     }
 
+    if (shelterResult.status === "fulfilled") {
+      setShelters(Array.isArray(shelterResult.value) ? shelterResult.value : []);
+    }
+
     const connected =
-      incidentResult.status === "fulfilled" || resourceResult.status === "fulfilled";
+      incidentResult.status === "fulfilled" || resourceResult.status === "fulfilled" || shelterResult.status === "fulfilled";
 
     setApiOnline(connected);
     setDashboardError(
@@ -125,6 +131,35 @@ function App() {
   useEffect(() => {
     loadDashboardData();
   }, [loadDashboardData]);
+
+  // Subscribe to Server-Sent Events (SSE) for real-time multi-dispatcher updates
+  useEffect(() => {
+    const unsubscribe = subscribeToEvents(({ type, data }) => {
+      setApiOnline(true);
+      setDashboardError(null);
+
+      if (type === "incident_created" || type === "incident_updated") {
+        if (data && data.id) {
+          upsertIncident(data);
+        }
+      } else if (type === "incident_merged") {
+        if (data?.primaryIncident) upsertIncident(data.primaryIncident);
+        if (data?.mergedIncident) upsertIncident(data.mergedIncident);
+      } else if (type === "resource_updated") {
+        if (data && data.id) {
+          upsertResource(data);
+        }
+      } else if (type === "shelter_updated") {
+        if (data && data.id) {
+          upsertShelter(data);
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     let ignore = false;
@@ -171,6 +206,7 @@ function App() {
 
   const displayIncidents = apiOnline ? sortIncidents(incidents) : fallbackIncidents;
   const displayResources = apiOnline ? resources : fallbackResources;
+  const displayShelters = apiOnline ? shelters : fallbackShelters;
   const activeCount = displayIncidents.filter((incident) => !["resolved", "merged"].includes(incident.status)).length;
   const criticalCount = displayIncidents.filter(
     (incident) => incident.severity === "critical" && incident.status !== "resolved"
@@ -185,10 +221,10 @@ function App() {
       alerts: newAlertCount,
       incidents: activeCount,
       resources: displayResources.filter((resource) => resource.status === "available").length,
-      shelters: 5,
+      shelters: displayShelters.length,
       analytics: criticalCount + reviewCount
     }),
-    [activeCount, criticalCount, displayResources, newAlertCount, reviewCount]
+    [activeCount, criticalCount, displayResources, displayShelters.length, newAlertCount, reviewCount]
   );
 
   function upsertIncident(incident) {
@@ -200,6 +236,14 @@ function App() {
   function upsertResource(resource) {
     setResources((current) =>
       [resource, ...current.filter((item) => item.id !== resource.id)].sort((a, b) =>
+        a.name.localeCompare(b.name)
+      )
+    );
+  }
+
+  function upsertShelter(shelter) {
+    setShelters((current) =>
+      [shelter, ...current.filter((item) => item.id !== shelter.id)].sort((a, b) =>
         a.name.localeCompare(b.name)
       )
     );
@@ -423,6 +467,23 @@ function App() {
     );
   }
 
+  async function patchShelterOccupancy(shelter, updateData) {
+    if (!apiOnline) {
+      return;
+    }
+
+    try {
+      const updatedShelter = await fetchJson(`/shelters/${shelter.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(updateData)
+      });
+
+      upsertShelter(updatedShelter);
+    } catch (error) {
+      console.error("Failed to update shelter occupancy:", error);
+    }
+  }
+
   function renderActiveView() {
     const sharedIncidentProps = {
       actionStates,
@@ -461,7 +522,7 @@ function App() {
           />
         );
       case "shelters":
-        return <SheltersView />;
+        return <SheltersView shelters={displayShelters} onUpdateShelter={patchShelterOccupancy} />;
       case "analytics":
         return (
           <AnalyticsView
