@@ -9,6 +9,20 @@ const DEFAULT_CENTER = [
 ];
 const DEFAULT_ZOOM = Number(import.meta.env.VITE_MAP_DEFAULT_ZOOM || 12);
 
+function toRadians(deg) {
+  return (deg * Math.PI) / 180;
+}
+
+function calculateDistanceKm(a, b) {
+  const dLat = toRadians(b.lat - a.lat);
+  const dLng = toRadians(b.lng - a.lng);
+  const sinLat = Math.sin(dLat / 2);
+  const sinLng = Math.sin(dLng / 2);
+  const val = sinLat * sinLat + Math.cos(toRadians(a.lat)) * Math.cos(toRadians(b.lat)) * sinLng * sinLng;
+  const straightLine = 6371 * 2 * Math.atan2(Math.sqrt(val), Math.sqrt(1 - val));
+  return straightLine * 1.3; // 1.3x road circuity factor
+}
+
 function createMarkerHtml(color, inner = "") {
   return `<div class="map-marker" style="--marker-color:${color}"><span>${inner}</span></div>`;
 }
@@ -62,17 +76,63 @@ function DashboardMap({ heightClass = "h-[390px]", incidents, resources, title =
     layerRef.current.clearLayers();
     const markerBounds = [];
 
+    // Build resource map for fast lookup
+    const resourceMap = new Map();
+    resources.forEach((r) => {
+      if (r.id) resourceMap.set(r.id, r);
+      if (r.name) resourceMap.set(r.name, r);
+    });
+
+    // 1. Render Incidents & Active Dispatch Route Lines
     incidents
       .filter((incident) => typeof incident.lat === "number" && typeof incident.lng === "number")
       .forEach((incident) => {
         const style = getSeverityStyle(incident.severity);
         const icon = L.divIcon({ className: "", html: createMarkerHtml(style.stroke), iconSize: [34, 34], iconAnchor: [17, 17] });
-        markerBounds.push([incident.lat, incident.lng]);
-        L.marker([incident.lat, incident.lng], { icon })
-          .bindPopup(`<strong>${style.label}</strong><br />${incident.locationText || "Unknown location"}`)
+        const incidentLatLng = [incident.lat, incident.lng];
+        markerBounds.push(incidentLatLng);
+
+        L.marker(incidentLatLng, { icon })
+          .bindPopup(`<strong>${style.label} Emergency</strong><br />${incident.locationText || "Incident location"}<br /><span style="font-size:11px;color:#94a3b8">Status: ${statusLabel(incident.status)}</span>`)
           .addTo(layerRef.current);
+
+        // Find assigned resource
+        const assignedRes = incident.assignedResource
+          ? (typeof incident.assignedResource === "object" ? incident.assignedResource : resourceMap.get(incident.assignedResource))
+          : (incident.assignedResourceId ? resourceMap.get(incident.assignedResourceId) : null);
+
+        const targetRes = assignedRes && typeof assignedRes.lat === "number" && typeof assignedRes.lng === "number"
+          ? assignedRes
+          : null;
+
+        if (targetRes && !["resolved", "merged"].includes(incident.status)) {
+          const resLatLng = [targetRes.lat, targetRes.lng];
+          const distKm = Number(calculateDistanceKm({ lat: targetRes.lat, lng: targetRes.lng }, { lat: incident.lat, lng: incident.lng }).toFixed(1));
+          const etaMinutes = Math.max(2, Math.ceil((distKm / 45) * 60));
+
+          // Draw active dispatch route polyline
+          L.polyline([resLatLng, incidentLatLng], {
+            color: "#38bdf8",
+            weight: 3.5,
+            opacity: 0.85,
+            dashArray: "8, 8",
+            className: "route-polyline"
+          }).addTo(layerRef.current);
+
+          // Place live ETA badge at route midpoint
+          const midLat = (targetRes.lat + incident.lat) / 2;
+          const midLng = (targetRes.lng + incident.lng) / 2;
+          const etaIcon = L.divIcon({
+            className: "",
+            html: `<div class="eta-badge">⚡ ${etaMinutes}m ETA (${distKm}km)</div>`,
+            iconAnchor: [45, 12]
+          });
+
+          L.marker([midLat, midLng], { icon: etaIcon, interactive: false }).addTo(layerRef.current);
+        }
       });
 
+    // 2. Render Resources
     resources
       .filter((resource) => typeof resource.lat === "number" && typeof resource.lng === "number")
       .slice(0, 36)
