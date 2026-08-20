@@ -32,3 +32,18 @@ model Resource {
   lng       Float
   incidents Incident[]
 }
+
+model Shelter {
+  id           String   @id @default(cuid())
+  name         String
+  locationText String
+  lat          Float
+  lng          Float
+  capacity     Int
+  occupancy    Int      @default(0)
+  status       String   @default("active")
+  contactPhone String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+

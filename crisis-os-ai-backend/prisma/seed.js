@@ -149,6 +149,64 @@ const resources = [
   }
 ];
 
+const shelters = [
+  {
+    id: "shelter-lhr-sports-complex",
+    name: "Nishtar Park Sports Complex Relief Camp",
+    locationText: "Nishtar Park, Gulberg III, Lahore",
+    lat: 31.5125,
+    lng: 74.3312,
+    capacity: 500,
+    occupancy: 180,
+    status: "active",
+    contactPhone: "+92 42 111 222 333"
+  },
+  {
+    id: "shelter-isl-convention-center",
+    name: "Islamabad Convention Center Relief Hub",
+    locationText: "Club Road, G-5/1, Islamabad",
+    lat: 33.7089,
+    lng: 73.0924,
+    capacity: 800,
+    occupancy: 340,
+    status: "active",
+    contactPhone: "+92 51 920 1122"
+  },
+  {
+    id: "shelter-khi-expocenter",
+    name: "Karachi Expo Centre Emergency Shelter",
+    locationText: "University Road, Gulshan-e-Iqbal, Karachi",
+    lat: 24.9012,
+    lng: 67.0876,
+    capacity: 1200,
+    occupancy: 610,
+    status: "active",
+    contactPhone: "+92 21 992 0112"
+  },
+  {
+    id: "shelter-rwp-shahbaz-sharif-park",
+    name: "Rawalpindi Relief & Aid Center",
+    locationText: "Rawal Road, Satellite Town, Rawalpindi",
+    lat: 33.6261,
+    lng: 73.0714,
+    capacity: 400,
+    occupancy: 95,
+    status: "active",
+    contactPhone: "+92 51 445 1122"
+  },
+  {
+    id: "shelter-psh-sports-complex",
+    name: "Peshawar Qayyum Stadium Shelter",
+    locationText: "Cantt, Peshawar",
+    lat: 34.0041,
+    lng: 71.5512,
+    capacity: 600,
+    occupancy: 210,
+    status: "active",
+    contactPhone: "+92 91 921 1122"
+  }
+];
+
 function createPrismaClient() {
   const connectionString = process.env.DATABASE_URL;
 
@@ -182,7 +240,26 @@ async function main() {
       )
     );
 
-    console.log(`Seeded ${resources.length} simulated resources across Pakistan.`);
+    await Promise.all(
+      shelters.map((shelter) =>
+        prisma.shelter.upsert({
+          where: { id: shelter.id },
+          update: {
+            name: shelter.name,
+            locationText: shelter.locationText,
+            lat: shelter.lat,
+            lng: shelter.lng,
+            capacity: shelter.capacity,
+            occupancy: shelter.occupancy,
+            status: shelter.status,
+            contactPhone: shelter.contactPhone
+          },
+          create: shelter
+        })
+      )
+    );
+
+    console.log(`Seeded ${resources.length} simulated resources and ${shelters.length} emergency shelters across Pakistan.`);
   } finally {
     await prisma.$disconnect();
   }

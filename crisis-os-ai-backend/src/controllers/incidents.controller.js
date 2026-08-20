@@ -1,4 +1,5 @@
 import { getPrisma } from "../lib/prisma.js";
+import { broadcastEvent } from "../lib/events.js";
 import { analyzeIncidentText } from "../services/incidentAnalysis.service.js";
 import { attachDuplicateSignals, findPossibleDuplicateIncidents } from "../services/duplicateIncident.service.js";
 import { resolveIncidentLocation } from "../services/geocoding.service.js";
@@ -171,7 +172,7 @@ export async function createIncident(req, res) {
       : null;
   const possibleDuplicates = await findPossibleDuplicateIncidents(prisma, incident);
 
-  res.status(201).json({
+  const payload = {
     ...incident,
     suggestedResource,
     possibleDuplicates,
@@ -183,7 +184,10 @@ export async function createIncident(req, res) {
           name: resolvedLocation.name
         }
       : null
-  });
+  };
+
+  broadcastEvent("incident_created", payload);
+  res.status(201).json(payload);
 }
 
 export async function listIncidents(_req, res) {
@@ -231,110 +235,106 @@ export async function updateIncidentStatus(req, res) {
   }
 
   const prisma = getPrisma();
-  const currentIncident = await prisma.incident.findUnique({
-    where: {
-      id: req.params.id
-    }
-  });
 
-  if (!currentIncident) {
-    throw createHttpError(404, "Incident not found.");
-  }
-
-  if (status === "assigned") {
-    const resource = await getDispatchResource(
-      prisma,
-      currentIncident,
-      assignedResourceId
-    );
-
-    if (
-      currentIncident.assignedResourceId &&
-      currentIncident.assignedResourceId !== resource.id
-    ) {
-      await releaseAssignedResource(prisma, currentIncident);
-    }
-
-    await prisma.resource.update({
+  const updatedIncident = await prisma.$transaction(async (tx) => {
+    const currentIncident = await tx.incident.findUnique({
       where: {
-        id: resource.id
-      },
-      data: {
-        status: "busy"
+        id: req.params.id
       }
     });
 
-    const incident = await prisma.incident.update({
-      where: {
-        id: req.params.id
-      },
-      data: {
-        status: "assigned",
-        assignedResourceId: resource.id
-      },
-      include: includeAssignedResource
-    });
-
-    res.json(incident);
-    return;
-  }
-
-  if (["en_route", "on_scene"].includes(status)) {
-    if (!currentIncident.assignedResourceId) {
-      throw createHttpError(
-        409,
-        "Incident must be assigned before moving to en_route or on_scene."
-      );
+    if (!currentIncident) {
+      throw createHttpError(404, "Incident not found.");
     }
 
-    const incident = await prisma.incident.update({
+    if (status === "assigned") {
+      const resource = await getDispatchResource(
+        tx,
+        currentIncident,
+        assignedResourceId
+      );
+
+      if (
+        currentIncident.assignedResourceId &&
+        currentIncident.assignedResourceId !== resource.id
+      ) {
+        await releaseAssignedResource(tx, currentIncident);
+      }
+
+      await tx.resource.update({
+        where: {
+          id: resource.id
+        },
+        data: {
+          status: "busy"
+        }
+      });
+
+      return tx.incident.update({
+        where: {
+          id: req.params.id
+        },
+        data: {
+          status: "assigned",
+          assignedResourceId: resource.id
+        },
+        include: includeAssignedResource
+      });
+    }
+
+    if (["en_route", "on_scene"].includes(status)) {
+      if (!currentIncident.assignedResourceId) {
+        throw createHttpError(
+          409,
+          "Incident must be assigned before moving to en_route or on_scene."
+        );
+      }
+
+      return tx.incident.update({
+        where: {
+          id: req.params.id
+        },
+        data: {
+          status
+        },
+        include: includeAssignedResource
+      });
+    }
+
+    if (status === "resolved") {
+      await releaseAssignedResource(tx, currentIncident);
+
+      return tx.incident.update({
+        where: {
+          id: req.params.id
+        },
+        data: {
+          status: "resolved"
+        },
+        include: includeAssignedResource
+      });
+    }
+
+    if (currentIncident.assignedResourceId) {
+      await releaseAssignedResource(tx, currentIncident);
+    }
+
+    return tx.incident.update({
       where: {
         id: req.params.id
       },
       data: {
-        status
+        status,
+        assignedResourceId: null
       },
       include: includeAssignedResource
     });
-
-    res.json(incident);
-    return;
-  }
-
-  if (status === "resolved") {
-    await releaseAssignedResource(prisma, currentIncident);
-
-    const incident = await prisma.incident.update({
-      where: {
-        id: req.params.id
-      },
-      data: {
-        status: "resolved"
-      },
-      include: includeAssignedResource
-    });
-
-    res.json(incident);
-    return;
-  }
-
-  if (currentIncident.assignedResourceId) {
-    await releaseAssignedResource(prisma, currentIncident);
-  }
-
-  const incident = await prisma.incident.update({
-    where: {
-      id: req.params.id
-    },
-    data: {
-      status,
-      assignedResourceId: null
-    },
-    include: includeAssignedResource
   });
 
-  res.json(incident);
+  broadcastEvent("incident_updated", updatedIncident);
+  res.json(updatedIncident);
 }
+
 function appendIncidentNote(currentNotes, note) {
   return [currentNotes, note].filter(Boolean).join("\n");
 }
@@ -356,101 +356,107 @@ export async function mergeIncidentDuplicate(req, res) {
   }
 
   const prisma = getPrisma();
-  const [primaryIncident, duplicateIncident] = await Promise.all([
-    prisma.incident.findUnique({
+
+  const result = await prisma.$transaction(async (tx) => {
+    const [primaryIncident, duplicateIncident] = await Promise.all([
+      tx.incident.findUnique({
+        where: {
+          id: primaryIncidentId
+        }
+      }),
+      tx.incident.findUnique({
+        where: {
+          id: duplicateIncidentId
+        }
+      })
+    ]);
+
+    if (!primaryIncident) {
+      throw createHttpError(404, "Primary incident not found.");
+    }
+
+    if (!duplicateIncident) {
+      throw createHttpError(404, "Duplicate incident not found.");
+    }
+
+    if (primaryIncident.status === "merged") {
+      throw createHttpError(409, "Cannot merge into an incident that is already merged.");
+    }
+
+    if (duplicateIncident.status === "merged") {
+      throw createHttpError(409, "Duplicate incident is already merged.");
+    }
+
+    const mergedAt = new Date().toISOString();
+    const shouldTransferAssignedResource =
+      !primaryIncident.assignedResourceId &&
+      duplicateIncident.assignedResourceId &&
+      isActiveDispatchStatus(duplicateIncident.status);
+
+    if (
+      duplicateIncident.assignedResourceId &&
+      duplicateIncident.assignedResourceId !== primaryIncident.assignedResourceId &&
+      !shouldTransferAssignedResource
+    ) {
+      await tx.resource.update({
+        where: {
+          id: duplicateIncident.assignedResourceId
+        },
+        data: {
+          status: "available"
+        }
+      });
+    }
+
+    const primaryMergeNote = `Merged duplicate incident ${duplicateIncident.id} on ${mergedAt}. Duplicate report: ${duplicateIncident.rawText}`;
+    const duplicateMergeNote = `Merged into incident ${primaryIncident.id} on ${mergedAt}.`;
+
+    const updatedPrimaryIncident = await tx.incident.update({
       where: {
-        id: primaryIncidentId
-      }
-    }),
-    prisma.incident.findUnique({
-      where: {
-        id: duplicateIncidentId
-      }
-    })
-  ]);
-
-  if (!primaryIncident) {
-    throw createHttpError(404, "Primary incident not found.");
-  }
-
-  if (!duplicateIncident) {
-    throw createHttpError(404, "Duplicate incident not found.");
-  }
-
-  if (primaryIncident.status === "merged") {
-    throw createHttpError(409, "Cannot merge into an incident that is already merged.");
-  }
-
-  if (duplicateIncident.status === "merged") {
-    throw createHttpError(409, "Duplicate incident is already merged.");
-  }
-
-  const mergedAt = new Date().toISOString();
-  const shouldTransferAssignedResource =
-    !primaryIncident.assignedResourceId &&
-    duplicateIncident.assignedResourceId &&
-    isActiveDispatchStatus(duplicateIncident.status);
-
-  if (
-    duplicateIncident.assignedResourceId &&
-    duplicateIncident.assignedResourceId !== primaryIncident.assignedResourceId &&
-    !shouldTransferAssignedResource
-  ) {
-    await prisma.resource.update({
-      where: {
-        id: duplicateIncident.assignedResourceId
+        id: primaryIncident.id
       },
       data: {
-        status: "available"
-      }
+        aiNotes: appendIncidentNote(primaryIncident.aiNotes, primaryMergeNote),
+        ...(shouldTransferAssignedResource
+          ? {
+              assignedResourceId: duplicateIncident.assignedResourceId,
+              status: isActiveDispatchStatus(primaryIncident.status)
+                ? primaryIncident.status
+                : "assigned"
+            }
+          : {})
+      },
+      include: includeAssignedResource
     });
-  }
 
-  const primaryMergeNote = `Merged duplicate incident ${duplicateIncident.id} on ${mergedAt}. Duplicate report: ${duplicateIncident.rawText}`;
-  const duplicateMergeNote = `Merged into incident ${primaryIncident.id} on ${mergedAt}.`;
+    const mergedIncident = await tx.incident.update({
+      where: {
+        id: duplicateIncident.id
+      },
+      data: {
+        assignedResourceId: null,
+        aiNotes: appendIncidentNote(duplicateIncident.aiNotes, duplicateMergeNote),
+        status: "merged"
+      },
+      include: includeAssignedResource
+    });
 
-  const updatedPrimaryIncident = await prisma.incident.update({
-    where: {
-      id: primaryIncident.id
-    },
-    data: {
-      aiNotes: appendIncidentNote(primaryIncident.aiNotes, primaryMergeNote),
-      ...(shouldTransferAssignedResource
-        ? {
-            assignedResourceId: duplicateIncident.assignedResourceId,
-            status: isActiveDispatchStatus(primaryIncident.status)
-              ? primaryIncident.status
-              : "assigned"
-          }
-        : {})
-    },
-    include: includeAssignedResource
+    const possibleDuplicates = await findPossibleDuplicateIncidents(
+      tx,
+      updatedPrimaryIncident
+    );
+
+    return {
+      primaryIncident: {
+        ...updatedPrimaryIncident,
+        possibleDuplicates
+      },
+      mergedIncident
+    };
   });
 
-  const mergedIncident = await prisma.incident.update({
-    where: {
-      id: duplicateIncident.id
-    },
-    data: {
-      assignedResourceId: null,
-      aiNotes: appendIncidentNote(duplicateIncident.aiNotes, duplicateMergeNote),
-      status: "merged"
-    },
-    include: includeAssignedResource
-  });
-
-  const possibleDuplicates = await findPossibleDuplicateIncidents(
-    prisma,
-    updatedPrimaryIncident
-  );
-
-  res.json({
-    primaryIncident: {
-      ...updatedPrimaryIncident,
-      possibleDuplicates
-    },
-    mergedIncident
-  });
+  broadcastEvent("incident_merged", result);
+  res.json(result);
 }
 export async function suggestResourceForIncident(req, res) {
   const prisma = getPrisma();

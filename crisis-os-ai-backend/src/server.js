@@ -3,7 +3,11 @@ import cors from "cors";
 import express from "express";
 import incidentRoutes from "./routes/incidents.routes.js";
 import resourceRoutes from "./routes/resources.routes.js";
+import shelterRoutes from "./routes/shelters.routes.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
+import { authMiddleware } from "./middleware/auth.js";
+import { apiRateLimiter } from "./middleware/rateLimit.js";
+import { sseHandler } from "./lib/events.js";
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -46,6 +50,8 @@ app.use(
   })
 );
 app.use(express.json());
+app.use(apiRateLimiter);
+app.use(authMiddleware);
 
 app.get("/health", (_req, res) => {
   res.json({
@@ -54,8 +60,10 @@ app.get("/health", (_req, res) => {
   });
 });
 
+app.get("/api/events", sseHandler);
 app.use("/api/incidents", incidentRoutes);
 app.use("/api/resources", resourceRoutes);
+app.use("/api/shelters", shelterRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

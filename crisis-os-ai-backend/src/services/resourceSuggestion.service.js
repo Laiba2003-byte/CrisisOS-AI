@@ -123,20 +123,32 @@ export function calculateDistanceKm(origin, destination) {
       Math.sin(lngDistance / 2) *
       Math.sin(lngDistance / 2);
 
-  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const straightLineKm = earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  // Apply a 1.3x road circuity factor to approximate real-world driving distance
+  const roadDetourFactor = Number(process.env.ROAD_DETOUR_FACTOR || 1.3);
+  return straightLineKm * roadDetourFactor;
 }
 
 export function rankResourcesByDistance(origin, resources) {
+  const averageEmergencySpeedKmh = 45; // average urban emergency response speed
+
   return resources
-    .map((resource) => ({
-      ...resource,
-      distanceKm: Number(
+    .map((resource) => {
+      const distanceKm = Number(
         calculateDistanceKm(origin, {
           lat: resource.lat,
           lng: resource.lng
         }).toFixed(2)
-      )
-    }))
+      );
+      const etaMinutes = Math.max(2, Math.ceil((distanceKm / averageEmergencySpeedKmh) * 60));
+
+      return {
+        ...resource,
+        distanceKm,
+        etaMinutes
+      };
+    })
     .sort((a, b) => a.distanceKm - b.distanceKm);
 }
 

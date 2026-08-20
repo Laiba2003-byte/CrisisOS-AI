@@ -1,4 +1,5 @@
 import { getPrisma } from "../lib/prisma.js";
+import { broadcastEvent } from "../lib/events.js";
 
 const allowedResourceStatuses = new Set(["available", "busy", "offline"]);
 
@@ -73,6 +74,7 @@ export async function updateResourceStatus(req, res) {
     }
   });
 
+  broadcastEvent("resource_updated", updatedResource);
   res.json(updatedResource);
 }
 
@@ -114,8 +116,11 @@ export async function updateResourceTracking(req, res) {
     data
   });
 
-  res.json({
+  const responsePayload = {
     ...updatedResource,
     trackingUpdatedAt: new Date().toISOString()
-  });
+  };
+
+  broadcastEvent("resource_updated", responsePayload);
+  res.json(responsePayload);
 }
